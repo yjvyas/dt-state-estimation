@@ -1,0 +1,11 @@
+<package>
+  <name>encoder_localization</name>
+  <version>0.1.0</version>
+  <description>
+  This package does localization based on wheel encoders.
+  </description>
+  <maintainer email="yjvyas@gmail.com">Yash Vyas</maintainer>
+  <license>None</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+</package>
