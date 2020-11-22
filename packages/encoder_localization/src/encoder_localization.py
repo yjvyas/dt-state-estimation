@@ -27,12 +27,11 @@ class EncoderLocalization(DTROS):
         self.L = rospy.get_param(f'/{self.veh_name}/kinematics_node/baseline', 10)
         self.rate = 30 # pose estimation frequency in hertz
         self.dt = 1/self.rate
+        self.reset_vel_time = rospy.Duration(0.05)
         self.resolution = 135
 
         # Integrated distance
         self.encoder_ticks = [None, None] # this is updated in the callbacks
-        self.encoder_ticks_curr = [None, None] # this and the one below are updated in the timer
-        self.encoder_ticks_prev = [None, None]
         self.encoder_tsmps = [rospy.Time.now(), rospy.Time.now()] # this is updated in the callbacks
         self.wheel_velocities = [0, 0] # this is updated in the callbacks
         self.x = 0
@@ -47,39 +46,40 @@ class EncoderLocalization(DTROS):
 
         # Publishers - CHANGE to tf transformations rviz
         self.pub_pose = rospy.Publisher(f'/{self.veh_name}/pose', TransformStamped, queue_size=30)
-        # self.br = tf.TransformBroadcaster()
+        self.br = tf.TransformBroadcaster()
 
         # Timer
-        self.timer = rospy.Timer(rospy.Duration(self.dt), callback=self.publish_pose)
+        self.reset_vel_timer = rospy.Timer(rospy.Duration(0.125), callback=self.reset_vel)
+        self.timer = rospy.Timer(rospy.Duration(self.dt), callback=self.pose_callback)
 
         self.log("Initialized")
 
     def cb_encoder_data(self, msg, args):
         index_wheel = args[0]
+        current_time = rospy.Time(msg.header.stamp.secs, msg.header.stamp.nsecs)
+        if self.encoder_ticks[index_wheel] is not None:
+            dt = current_time - self.encoder_tsmps[index_wheel]
+            dN = self.encoder_ticks[index_wheel] - msg.data
+            self.wheel_velocities[index_wheel] = 2*pi*self.radius*dN/(self.resolution*dt.to_sec())
+        
         self.encoder_ticks[index_wheel] = msg.data
-        self.encoder_tsmps[index_wheel] = rospy.Time(msg.header.stamp.secs, msg.header.stamp.nsecs)
+        self.encoder_tsmps[index_wheel] = current_time
 
+    def reset_vel(self, timer_event):
+        for index_wheel in [0, 1]:
+            if timer_event.current_real - self.encoder_tsmps[index_wheel] > self.reset_vel_time:
+                self.wheel_velocities[index_wheel] = 0.0
+            
     def pose_estimation_encoder(self):
         """Does pose estimation."""
-        self.encoder_ticks_curr = self.encoder_ticks
-        rospy.loginfo('{}, {}, {}'.format(self.encoder_ticks, self.encoder_ticks_curr, self.encoder_ticks_prev))
-        dTheta_wheel = [0, 0]
-        for index_wheel in [0, 1]:
-            if self.encoder_ticks_curr[index_wheel] is not None and self.encoder_ticks_prev[index_wheel] is not None:
-                dN = self.encoder_ticks_curr[index_wheel] - self.encoder_ticks_prev[index_wheel]
-                dTheta_wheel[index_wheel] = 2*pi*self.radius*dN/self.resolution
-        rospy.loginfo("dTheta: {}".format(dTheta_wheel))
-        dv = 0.5*(dTheta_wheel[1] + dTheta_wheel[0])*self.radius
-        dw = 0.5*(dTheta_wheel[1] - dTheta_wheel[0])*self.radius/self.L
+        v = 0.5*(self.wheel_velocities[1] + self.wheel_velocities[0])*self.radius
+        w = 0.5*(self.wheel_velocities[1] - self.wheel_velocities[0])*self.radius/self.L
 
-        rospy.loginfo('dv={}, dw={}'.format(dv, dw))
-        self.x = self.x + np.cos(self.theta)*dv
-        self.y = self.y + np.sin(self.theta)*dv
-        self.theta = self.theta + dw
+        self.x = self.x + np.cos(self.theta)*v*self.dt
+        self.y = self.y + np.sin(self.theta)*v*self.dt
+        self.theta = self.theta + w*self.dt
 
-        self.encoder_ticks_prev = self.encoder_ticks_curr
-
-    def publish_pose(self, timer_event):
+    def publish_pose(self):
         self.pose_estimation_encoder()
 
         msg = TransformStamped()
@@ -98,15 +98,19 @@ class EncoderLocalization(DTROS):
         else:
             msg.header.stamp = self.encoder_tsmps[1]
         self.pub_pose.publish(msg)
-        # self.br.sendTransform((self.x, self.y, 0),
-        #                        tf.transformations.quaternion_from_euler(0, 0, self.theta),
-        #                        msg.header.stamp,
-        #                        self.child_frame_id,
-        #                        self.frame_id)
+        self.br.sendTransform((self.x, self.y, 0),
+                               tf.transformations.quaternion_from_euler(0, 0, self.theta),
+                               msg.header.stamp,
+                               self.child_frame_id,
+                               self.frame_id)
+    
+    def pose_callback(self, timer_event):
+        self.pose_estimation_encoder()
+        self.publish_pose()
 
 
 if __name__ == '__main__':
-    node = EncoderLocalization(node_name='encoder_localization')
+    node = EncoderLocalization(node_name='encoder_localization_node')
     # Keep it spinning to keep the node alive
     rospy.spin()
-    rospy.loginfo("wheel_encoder_node is up and running...")
+    rospy.loginfo("encoder_localization_node is up and running...")
