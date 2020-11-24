@@ -32,6 +32,7 @@ class EncoderLocalization(DTROS):
 
         # Integrated distance
         self.encoder_ticks = [None, None] # this is updated in the callbacks
+        self.encoder_ticks_prev = [None, None]
         self.encoder_tsmps = [rospy.Time.now(), rospy.Time.now()] # this is updated in the callbacks
         self.wheel_velocities = [0, 0] # this is updated in the callbacks
         self.x = 0
@@ -72,14 +73,14 @@ class EncoderLocalization(DTROS):
             
     def pose_estimation_encoder(self):
         """Does pose estimation."""
-        v = 0.5*(self.wheel_velocities[1] + self.wheel_velocities[0])*self.radius
-        w = 0.5*(self.wheel_velocities[1] - self.wheel_velocities[0])*self.radius/self.L
+        v = -0.5*(self.wheel_velocities[1] + self.wheel_velocities[0])*self.radius
+        w = -0.5*(self.wheel_velocities[1] - self.wheel_velocities[0])*self.radius/self.L
 
         self.x = self.x + np.cos(self.theta)*v*self.dt
         self.y = self.y + np.sin(self.theta)*v*self.dt
         self.theta = self.theta + w*self.dt
 
-    def publish_pose(self):
+    def publish_pose_encoder(self):
         self.pose_estimation_encoder()
 
         msg = TransformStamped()
@@ -106,7 +107,7 @@ class EncoderLocalization(DTROS):
     
     def pose_callback(self, timer_event):
         self.pose_estimation_encoder()
-        self.publish_pose()
+        self.publish_pose_encoder()
 
 
 if __name__ == '__main__':

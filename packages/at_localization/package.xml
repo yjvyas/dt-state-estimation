@@ -1,0 +1,11 @@
+<package>
+  <name>at_localization</name>
+  <version>0.1.0</version>
+  <description>
+  This package is used to do apriltag based localization.
+  </description>
+  <maintainer email="yjvyas@gmail.com">YOUR NAME</maintainer>
+  <license>None</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+</package>
