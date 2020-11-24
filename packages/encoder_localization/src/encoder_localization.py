@@ -46,7 +46,6 @@ class EncoderLocalization(DTROS):
             WheelEncoderStamped, self.cb_encoder_data, callback_args=[1])
 
         # Publishers - CHANGE to tf transformations rviz
-        self.pub_pose = rospy.Publisher(f'/{self.veh_name}/pose', TransformStamped, queue_size=30)
         self.br = tf.TransformBroadcaster()
 
         # Timer
@@ -59,9 +58,9 @@ class EncoderLocalization(DTROS):
         index_wheel = args[0]
         current_time = rospy.Time(msg.header.stamp.secs, msg.header.stamp.nsecs)
         if self.encoder_ticks[index_wheel] is not None:
+            dN = msg.data - self.encoder_ticks[index_wheel]
             dt = current_time - self.encoder_tsmps[index_wheel]
-            dN = self.encoder_ticks[index_wheel] - msg.data
-            self.wheel_velocities[index_wheel] = 2*pi*self.radius*dN/(self.resolution*dt.to_sec())
+            self.wheel_velocities[index_wheel] = dN*2*pi/(self.resolution*dt.to_sec())
         
         self.encoder_ticks[index_wheel] = msg.data
         self.encoder_tsmps[index_wheel] = current_time
@@ -73,8 +72,8 @@ class EncoderLocalization(DTROS):
             
     def pose_estimation_encoder(self):
         """Does pose estimation."""
-        v = -0.5*(self.wheel_velocities[1] + self.wheel_velocities[0])*self.radius
-        w = -0.5*(self.wheel_velocities[1] - self.wheel_velocities[0])*self.radius/self.L
+        v = 0.5*(self.wheel_velocities[1] + self.wheel_velocities[0])*self.radius
+        w = 0.5*(self.wheel_velocities[1] - self.wheel_velocities[0])*self.radius/self.L
 
         self.x = self.x + np.cos(self.theta)*v*self.dt
         self.y = self.y + np.sin(self.theta)*v*self.dt

@@ -29,14 +29,8 @@ class AprilTag_Localization(DTROS):
         # Initialize the DTROS parent class
         super(AprilTag_Localization, self).__init__(node_name=node_name,node_type=NodeType.GENERIC)
         self.veh_name = rospy.get_namespace().strip("/")
-        self.frame_id = "map"
 
         # read calibration
-        calibration_fname = '/data/config/calibrations/camera_extrinsic/default.yaml'
-        if 'CALIBRATION_FILE' in os.environ:
-            calibration_fname = os.environ['CALIBRATION_FILE']
-        
-        self.homography = self.readYamlFile(calibration_fname)
 
         intrinsic_fname = '/data/config/calibrations/camera_intrinsic/default.yaml'
         if 'INTRINSICS_FILE' in os.environ:
@@ -45,10 +39,6 @@ class AprilTag_Localization(DTROS):
         self.D = np.array(intrinsics['distortion_coefficients']['data'])
         self.K = np.reshape(np.array(intrinsics['camera_matrix']['data']), [3,3])
 
-        H = np.reshape(np.array(self.homography['homography']), [3, 3])
-        self.camera_to_axle = np.dot(np.array([[1, 0, 0, -0.0582], [0, 1, 0, 0], [0, 0, 1, -0.1042], [0, 0, 0, 1]]), 
-                                     tf.transformations.rotation_matrix(np.pi/6, (0, 1, 0)))
-
         # init poses
 
         self.x = 0
@@ -56,12 +46,13 @@ class AprilTag_Localization(DTROS):
         self.theta = 0
 
         # transforms
-        self.at_map = tf.transformations.identity_matrix() # april-tag
-        self.at_map[2,3] = 0.095
-        
-        self.C_to_Cd = np.array([[0, -1, 0 , 0], [0, 0, -1, 0], [1, 0, 0, 0], [0, 0, 0, 1]])
+        self.A_to_map = tf.transformations.identity_matrix() # april-tag
+        self.A_to_map[2,3] = -0.095
 
-        self.Ad_to_a = np.array([[0, 0, -1, 0], [1, 0, 0, 0], [0, -1, 0, 0], [0, 0, 0, 1]])
+        self.Ad_to_A = np.array([[0, 1, 0 , 0], [0, 0, -1, 0], [-1, 0, 0, 0], [0, 0, 0, 1]])
+        self.C_to_Cd = np.array([[0, 0, 1, 0], [-1, 0, 0, 0], [0, -1, 0, 0], [0, 0, 0, 1]])
+        self.baselink_to_camera = tf.transformations.rotation_matrix(np.pi*(20/180), (0, 1, 0))
+        self.baselink_to_camera[0:3,3] = np.array([0.0582, 0, 0.1072])
 
         # april tag detector
         self.at_detector = Detector(searchpath=['apriltags'],
@@ -75,10 +66,11 @@ class AprilTag_Localization(DTROS):
 
 
         # subscriber for images
+        self.listener = tf.TransformListener()
         self.sub = rospy.Subscriber(f'/{self.veh_name}/camera_node/image/compressed', CompressedImage, self.image_callback)
 
         # publisher
-        self.pub_pose = rospy.Publisher(f'/{self.veh_name}/pose', TransformStamped, queue_size=30)
+        self.pub_pose = rospy.Publisher(f'/{self.veh_name}/pose/apriltag', TransformStamped, queue_size=30)
         self.br = tf.TransformBroadcaster()
 
         # pther important things
@@ -99,38 +91,40 @@ class AprilTag_Localization(DTROS):
 
             ### TODO: Code here to calculate pose of camera (?)
 
-            self.broadcast_pose(self.at_map, self.frame_id, 'apriltag', stamp)
-
-            if len(tags) > 0:            
+            self.broadcast_pose(self.baselink_to_camera, 'baselink', 'camera', stamp)
+            if len(tags) > 0:
                 at_camera = tf.transformations.identity_matrix()
                 at_camera[0:3,0:3] = np.array(tags[0].pose_R) ## only detects first tag!
                 at_camera[0:3,3] = np.array(tags[0].pose_t).flatten()
-                camera_map = self.C_to_Cd @ at_camera @  self.Ad_to_a
-                baselink = camera_map @ self.camera_to_axle 
-                self.broadcast_pose(camera_map, self.frame_id, 'camera', stamp)
-                msg_baselink = self.broadcast_pose(baselink, self.frame_id, 'at_baselink', stamp)
-                self.pub_pose.publish(msg_baselink)
+                at = self.C_to_Cd @ at_camera @ self.Ad_to_A
+                self.broadcast_pose(at, 'camera', 'apriltag', stamp)
+                self.broadcast_pose(self.A_to_map, 'apriltag', 'map', stamp)
+
+                try:
+                    (trans, q) = self.listener.lookupTransform('/baselink', '/map', rospy.Time(0))
+                    msg = TransformStamped()
+                    msg.header.frame_id = 'map'
+                    msg.child_frame_id = 'baselink'
+                    msg.transform.translation.x = trans[0]
+                    msg.transform.translation.y = trans[1]
+                    msg.transform.translation.z = trans[2]
+                    msg.transform.rotation.x = q[0]
+                    msg.transform.rotation.y = q[1]
+                    msg.transform.rotation.z = q[2]
+                    msg.transform.rotation.w = q[3]
+                    msg.header.stamp = stamp
+                    self.pub_pose.publish(msg)
+                except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
+                    return
 
 
     def broadcast_pose(self, pose, frame_id, child_frame_id, stamp):
-        msg = TransformStamped()
         q = tf.transformations.quaternion_from_matrix(pose)
-        msg.header.frame_id = frame_id
-        msg.child_frame_id = child_frame_id
-        msg.transform.translation.x = pose[0,3]
-        msg.transform.translation.y = pose[1,3]
-        msg.transform.translation.z = pose[2,3]
-        msg.transform.rotation.x = q[0]
-        msg.transform.rotation.y = q[1]
-        msg.transform.rotation.z = q[2]
-        msg.transform.rotation.w = q[3]
-        msg.header.stamp = stamp
         self.br.sendTransform((pose[0,3], pose[1,3], pose[2,3]),
                                q,
                                stamp,
                                child_frame_id,
-                               self.frame_id)
-        return msg
+                               frame_id)
 
     def readImage(self, msg_image):
         """
