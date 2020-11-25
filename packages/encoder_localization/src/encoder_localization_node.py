@@ -6,8 +6,11 @@ from duckietown.dtros import DTROS, NodeType, TopicType, DTParam, ParamType
 from duckietown_msgs.msg import Twist2DStamped, WheelEncoderStamped
 from geometry_msgs.msg import TransformStamped
 from std_msgs.msg import Header, Float32
+# from std_srvs.srv import Empty, EmptyResponse
+from encoder_localization.srv import PoseCalibration, PoseCalibrationResponse
 from math import pi
 import tf
+
 
 class EncoderLocalization(DTROS):
 
@@ -46,11 +49,16 @@ class EncoderLocalization(DTROS):
             WheelEncoderStamped, self.cb_encoder_data, callback_args=[1])
 
         # Publishers - CHANGE to tf transformations rviz
+        self.pub_pose = rospy.Publisher(f'/{self.veh_name}/pose/encoder', TransformStamped, queue_size=30)
         self.br = tf.TransformBroadcaster()
+        self.listener = tf.TransformListener()
 
         # Timer
         self.reset_vel_timer = rospy.Timer(rospy.Duration(0.125), callback=self.reset_vel)
         self.timer = rospy.Timer(rospy.Duration(self.dt), callback=self.pose_callback)
+
+        # service
+        self.calibrate_service = rospy.Service(f'/{self.veh_name}/pose/calibrate_encoder', PoseCalibration, self.calibrate_pose)
 
         self.log("Initialized")
 
@@ -100,13 +108,27 @@ class EncoderLocalization(DTROS):
         self.pub_pose.publish(msg)
         self.br.sendTransform((self.x, self.y, 0),
                                tf.transformations.quaternion_from_euler(0, 0, self.theta),
-                               msg.header.stamp,
+                               rospy.Time.now(),
                                self.child_frame_id,
                                self.frame_id)
     
     def pose_callback(self, timer_event):
         self.pose_estimation_encoder()
         self.publish_pose_encoder()
+
+    def calibrate_pose(self, req):
+        trans = req.trans
+        q = req.quat
+        self.x = trans[0]
+        self.y = trans[1]
+        self.z = trans[2]
+
+        euler = tf.transformations.euler_from_quaternion(q)
+        self.theta = euler[2]
+            
+        resp = PoseCalibrationResponse()
+        resp.success = True
+        return resp
 
 
 if __name__ == '__main__':

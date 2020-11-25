@@ -1,0 +1,4 @@
+float32[3] trans
+float32[4] quat
+---
+bool success

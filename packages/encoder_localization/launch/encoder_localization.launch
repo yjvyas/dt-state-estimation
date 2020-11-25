@@ -1,5 +1,5 @@
 <launch>
   <group ns="$(arg veh)"> 
-    <node pkg="encoder_localization" type="encoder_localization.py" name="encoder_localization" output="screen"/>
+    <node pkg="encoder_localization" type="encoder_localization_node.py" name="encoder_localization" output="screen"/>
   </group>
 </launch>

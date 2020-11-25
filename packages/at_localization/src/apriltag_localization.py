@@ -10,6 +10,7 @@ import sys
 import tf
 from duckietown.dtros import DTROS, NodeType
 from sensor_msgs.msg import CompressedImage
+from std_srvs.srv import Empty, EmptyResponse
 from cv_bridge import CvBridge, CvBridgeError
 from geometry_msgs.msg import TransformStamped
 from dt_apriltags import Detector
@@ -58,7 +59,7 @@ class AprilTag_Localization(DTROS):
         self.at_detector = Detector(searchpath=['apriltags'],
                                     families='tag36h11',
                                     nthreads=4,
-                                    quad_decimate=2.0,
+                                    quad_decimate=4.0,
                                     quad_sigma=0.0,
                                     refine_edges=1,
                                     decode_sharpening=0.25,
@@ -73,8 +74,9 @@ class AprilTag_Localization(DTROS):
         self.pub_pose = rospy.Publisher(f'/{self.veh_name}/pose/apriltag', TransformStamped, queue_size=30)
         self.br = tf.TransformBroadcaster()
 
-        # pther important things
+        # other important things
         self.cvbr = CvBridge()
+        self.log("Initialized.")
 
 
     def image_callback(self, msg):
@@ -91,20 +93,20 @@ class AprilTag_Localization(DTROS):
 
             ### TODO: Code here to calculate pose of camera (?)
 
-            self.broadcast_pose(self.baselink_to_camera, 'baselink', 'camera', stamp)
+            self.broadcast_pose(self.baselink_to_camera, 'at_baselink', 'camera', stamp)
             if len(tags) > 0:
                 at_camera = tf.transformations.identity_matrix()
                 at_camera[0:3,0:3] = np.array(tags[0].pose_R) ## only detects first tag!
                 at_camera[0:3,3] = np.array(tags[0].pose_t).flatten()
                 at = self.C_to_Cd @ at_camera @ self.Ad_to_A
-                self.broadcast_pose(at, 'camera', 'apriltag', stamp)
-                self.broadcast_pose(self.A_to_map, 'apriltag', 'map', stamp)
+                self.broadcast_pose(at, 'camera', 'apriltag', rospy.Time.now())
+                self.broadcast_pose(self.A_to_map, 'apriltag', 'map', rospy.Time.now())
 
                 try:
-                    (trans, q) = self.listener.lookupTransform('/baselink', '/map', rospy.Time(0))
+                    (trans, q) = self.listener.lookupTransform('map', 'at_baselink', rospy.Time(0))
                     msg = TransformStamped()
                     msg.header.frame_id = 'map'
-                    msg.child_frame_id = 'baselink'
+                    msg.child_frame_id = 'at_baselink'
                     msg.transform.translation.x = trans[0]
                     msg.transform.translation.y = trans[1]
                     msg.transform.translation.z = trans[2]
@@ -112,10 +114,10 @@ class AprilTag_Localization(DTROS):
                     msg.transform.rotation.y = q[1]
                     msg.transform.rotation.z = q[2]
                     msg.transform.rotation.w = q[3]
-                    msg.header.stamp = stamp
+                    msg.header.stamp = rospy.Time.now()
                     self.pub_pose.publish(msg)
-                except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
-                    return
+                except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException) as e:
+                    pass
 
 
     def broadcast_pose(self, pose, frame_id, child_frame_id, stamp):

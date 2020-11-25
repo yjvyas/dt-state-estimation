@@ -1,0 +1,10 @@
+<launch>
+  <arg name="veh"/>
+  <arg name="map_file" default="hub"/>
+  <group ns="$(arg veh)">
+    <node pkg="encoder_localization" type="encoder_localization_node.py" name="encoder_localization" output="screen"/>
+    <node pkg="at_localization" type="apriltag_localization.py" name="at_localization" output="screen"/>
+    <node pkg="fused_localization" type="fused_localization.py" name="fused_localization" launch-prefix="bash -c 'sleep 2; $0 $@' " output="screen"/>
+  </group>
+
+</launch>
